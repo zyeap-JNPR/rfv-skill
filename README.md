@@ -119,10 +119,78 @@ rm ~/.agents/skills/review-fix-verify        # removes the symlink only
 
 ## Contributing / updating the skill
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. Quick summary:
+
 1. Edit files under `skills/review-fix-verify/` in your clone.
-2. `bash -n skills/review-fix-verify/rfv-prep.sh` to sanity-check the script.
-3. Commit and push. Consumers pick up changes via `npx skills update` (Method A)
+2. Run the test suite: `bats tests/rfv-prep.bats` (requires [bats-core](https://github.com/bats-core/bats-core)).
+3. Run shellcheck: `shellcheck -S warning skills/review-fix-verify/rfv-prep.sh`
+4. Commit and push. Consumers pick up changes via `npx skills update` (Method A)
    or `git pull` (Method B).
+
+---
+
+## Testing
+
+The shell script has a behavioral test suite using [bats-core](https://github.com/bats-core/bats-core).
+
+```bash
+# Install bats-core
+brew install bats-core          # macOS
+sudo apt-get install bats       # Debian/Ubuntu
+
+# Run all tests (from repo root)
+bats tests/rfv-prep.bats
+
+# Syntax check only
+bash -n skills/review-fix-verify/rfv-prep.sh
+
+# Shellcheck (static analysis)
+shellcheck -S warning skills/review-fix-verify/rfv-prep.sh
+```
+
+CI runs all three checks on every push and PR via GitHub Actions.
+
+---
+
+## Compatibility
+
+| Requirement | Notes |
+|-------------|-------|
+| Shell | `bash` ≥ 4.0 (uses arrays, process substitution) |
+| Git | ≥ 2.0 |
+| `jq` | Optional but recommended for `package.json` detection |
+| OS | macOS, Linux. Windows: use WSL2 or Git Bash |
+| GNU vs BSD tools | `awk`, `grep`, `sed` use only POSIX-compatible flags |
+
+The skill (SKILL.md) requires a Copilot CLI or VS Code Copilot extension that supports
+the `task` tool with `model` overrides and `agent_type: code-review`.
+
+---
+
+## Security
+
+- **No secrets in this repo.** `rfv-prep.sh` reads only your git history and project
+  files to detect test commands. It does not read `.env` files or credential stores.
+- **Diffs may contain sensitive data.** When you run this skill, your diff is inlined
+  into subagent prompts and processed by external AI models. Avoid running it on diffs
+  that contain secrets, credentials, PII, or employer-confidential data.
+- **No network access.** `rfv-prep.sh` makes no network requests.
+- Found a security issue? See [SECURITY.md](SECURITY.md).
+
+---
+
+## Versioning
+
+This repo uses [Semantic Versioning](https://semver.org/):
+
+- **Patch** (x.y.**Z**) — bug fixes to `rfv-prep.sh`, doc corrections, test additions.
+- **Minor** (x.**Y**.0) — new ecosystem support, new structured output markers, additive SKILL.md changes.
+- **Major** (**X**.0.0) — breaking changes to SKILL.md phases, `rfv-prep.sh` exit codes, or structured output format.
+
+`npx skills update` pulls the latest commit from `main`. Pin to a tag if you need
+stability: `git checkout v1.2.3` in your Method B clone.
+
+---
 
 ## License
 

@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Shell tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bats-core
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y bats
+
+      - name: Install shellcheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Syntax check
+        run: bash -n skills/review-fix-verify/rfv-prep.sh
+
+      - name: Shellcheck
+        run: shellcheck -S warning skills/review-fix-verify/rfv-prep.sh
+
+      - name: Bats tests
+        run: bats tests/rfv-prep.bats

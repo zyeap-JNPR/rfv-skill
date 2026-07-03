@@ -61,14 +61,17 @@ and note it in the summary.
 
 2. **Handle the script's guards:**
    - `RFV_ERROR: not a git repository` → stop, tell the user this skill needs a git repo.
+   - `RFV_ERROR: repository has no commits yet` → stop, tell the user to make an initial commit.
    - `RFV_ERROR: empty diff` → stop, nothing to review.
    - `RFV_WARN: large diff (>800 lines)` → warn the user and offer to scope down
      (per-directory or per-commit) before spending 3 model reviews on it. Proceed
      only if they confirm.
 
-3. **Test command.** Take it from the script's `TEST/LINT COMMANDS` block. Prefer a
-   stored memory ("test command", "build command") if one exists. If the script
-   detected nothing, ask the user. Confirm the command before Phase 3.
+3. **Test command.** Parse the `RFV_TEST_CMD:` structured marker from the script
+   output — this is the authoritative pass/fail gate. `RFV_LINT_CMD:` and
+   `RFV_BUILD_CMD:` are advisory (run them, report failures, but do not block the
+   workflow on lint alone). Prefer a stored memory ("test command") if one exists.
+   If no `RFV_TEST_CMD:` line is present, ask the user. Confirm before Phase 3.
 
 4. **Capture the diff output** from the script into a variable — you will inline it
    as a *starting pointer* in the reviewer prompts (Phase 1). Report scope + line
@@ -110,6 +113,17 @@ Inline the diff from Phase 0 into each prompt. Use this template:
 > 6. Context checked: one phrase on what surrounding code you read to confirm it's real
 >
 > Number your findings. If you find nothing that meets the bar, say "NO FINDINGS".
+>
+> **Required output format — one block per finding (machine-parseable):**
+> ```
+> Finding N
+> Location: <file>:<line>
+> Severity: CRITICAL|HIGH|MEDIUM|LOW
+> Category: bug|race|security|correctness|resource-leak|other
+> Problem: <one sentence>
+> Fix: <minimal code change>
+> Context checked: <one phrase — what surrounding code confirmed this is real>
+> ```
 
 Collect all reviewer responses. If ALL reviewers return "NO FINDINGS", skip to Phase 6.
 
@@ -157,8 +171,15 @@ Launch **ONE `general-purpose` builder subagent** (`model: claude-opus-4.8`, `re
 > **Rules:**
 > - Fix exactly what is specified. Do not refactor unrelated code.
 > - If a fix requires a design decision (e.g., which concurrency primitive), prefer the simplest correct approach and note it.
-> - Run `{{TEST_COMMAND}}` after all edits. **Bound: max 3 test-fix cycles.** If tests are still red after 3 attempts, STOP and report exactly which tests fail and your best diagnosis — do not keep guessing or disable/skip tests to force green.
+> - Run `{{TEST_COMMAND}}` after all edits. **This is the authoritative pass/fail gate.**
+>   `{{LINT_COMMAND}}` (if provided) is advisory — run it and report failures, but do not
+>   block on lint alone. **Bound: max 3 test-fix cycles.** If tests are still red after 3
+>   attempts, STOP and report exactly which tests fail and your best diagnosis — do not keep
+>   guessing or disable/skip tests to force green.
 > - If the suite was already broken before your changes (pre-existing failures), note that separately — do not try to fix unrelated pre-existing failures.
+> - **DO NOT:** install new dependencies, widen scope beyond the accepted findings, run
+>   deployment commands, or use production credentials. If a fix requires a new dependency,
+>   document it and ask rather than adding it silently.
 > - Report: which findings you fixed, what you changed (file:line → what), and the final test output.
 
 Wait for builder to complete. Capture the summary.
@@ -216,13 +237,17 @@ Track iteration count (starts at 0, max = 2).
    reported a green full-suite run and no iteration happened, skip this — don't burn a
    redundant suite run. Report pass/fail either way.
 
-2. **Commit choice** — ask the user (default is NO commit):
+2. **Commit — explicit opt-in only.** Ask the user. Default is **NO commit** — stop and
+   summarize so the user can review and commit manually. Only commit if they explicitly
+   choose option B:
 
 > The fixes are verified and tests pass. Should I:
-> - (A) **Summarize and stop** (default) — you commit manually
-> - (B) **Commit now** — I'll write a commit message following the repo's conventions
+> - **(A) Summarize and stop** ← **default** — review changes yourself, then commit manually
+> - (B) Commit now — I'll write a commit message following the repo's conventions
 
-If user chooses commit: write a commit message following the repo's observed conventions (check git log for style). Include a short body listing the findings fixed. Apply the `Co-authored-by` trailer only if it matches the repo's normal practice.
+   If user chooses commit: write a commit message following the repo's observed conventions
+   (check `git log` for style). Include a short body listing the findings fixed. Apply the
+   `Co-authored-by` trailer only if it matches the repo's normal practice. Never push.
 
 3. **Print final summary:**
 
@@ -253,6 +278,29 @@ If user chooses commit: write a commit message following the repo's observed con
 The Copilot CLI task tool already supports `model` overrides on built-in agent types (`code-review`, `general-purpose`). This skill uses that directly — no separate agent definition files needed.
 
 If you want named reviewer/verifier personas (e.g., to reuse across other skills), you can define them in your agents directory (`${AGENTS_DIR:-$HOME/.agents}/agents/`) when that directory is supported by your CLI version. Check the `manage-plugins` skill or `/help` for the current agent definition format. If that directory isn't supported by your install, the skill-only approach here is sufficient.
+
+---
+
+## Security & Safety constraints
+
+These apply to the orchestrator and all subagents throughout the workflow.
+
+**Data handling**
+- Never include `.env` file contents, secret values, API keys, tokens, or PII in any prompt or summary — even if the diff touches those files.
+- If the diff reveals a secret accidentally committed, flag it as a CRITICAL finding and stop the fix phase. Direct the user to rotate the secret and use `git filter-repo` to remove it.
+
+**Scope constraints**
+- The builder operates only in the local working tree. It must NOT: run deployment scripts, push to remote, modify CI configuration to disable checks, or widen scope beyond the accepted findings list.
+- Lint and type-check failures are advisory — report them, do not auto-fix unrelated issues to satisfy them.
+
+**Dependency policy**
+- The builder must NOT add, remove, or upgrade dependencies without explicit user approval. If a fix requires a new dependency, document the name and purpose, stop, and ask.
+
+**Production safety**
+- Local and staging test execution is allowed. Production credentials, production databases, and production API endpoints are out of scope. If the test command would touch production, stop and report.
+
+**Breaking changes**
+- If an accepted finding requires changing a public interface or removing a symbol, the builder must note this explicitly and suggest a deprecation path rather than a silent removal.
 
 ---
 

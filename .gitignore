@@ -9,3 +9,7 @@ Thumbs.db
 # Skills tooling
 node_modules/
 .skill-lock.json
+
+# Test artifacts
+tests/fixtures/tmp/
+*.tap
