@@ -58,7 +58,7 @@ Then invoke inside any git repo with `/review-fix-verify`, `review and fix`, or 
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/development.md](docs/development.md).
+See [docs/development.md](docs/development.md).
 
 ---
 

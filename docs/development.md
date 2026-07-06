@@ -25,8 +25,6 @@ CI runs all three checks on every push and PR via GitHub Actions.
 
 ## Contributing
 
-See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full guide. Quick summary:
-
 1. Edit files under `skills/review-fix-verify/` in your clone.
 2. Run the test suite: `bats tests/rfv-prep.bats`
 3. Run shellcheck: `shellcheck -S warning skills/review-fix-verify/rfv-prep.sh`

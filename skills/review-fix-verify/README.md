@@ -26,24 +26,27 @@ The critical insight: **the verifier reviews the fix diff, not the original code
 
 ## Model matrix
 
-Reviewers get fast models (they scan); builder/verifier get strong models (they reason).
+| Role | Model | Effort |
+|------|-------|--------|
+| Reviewer A | `claude-sonnet-4.6` | medium |
+| Reviewer B | `gpt-5.3-codex` | medium |
+| Reviewer C (`--thorough`) | `gemini-3.5-flash` | medium |
+| Reviewer (`--fast`) | `gemini-3.5-flash` | low |
+| Builder | `claude-sonnet-4.6` | medium |
+| Builder (`--thorough`) | `claude-opus-4.8` | high |
+| Builder (`--fast`) | `gemini-3.5-flash` | low |
+| Verifier | `gpt-5.4-mini` | medium |
 
-| Role | Default model | Effort |
-|------|--------------|--------|
-| Reviewer A | `gemini-3.5-flash` | medium |
-| Reviewer B | `gpt-5.4-mini` | medium |
-| Reviewer C (`--thorough` only) | `claude-sonnet-4.6` | — |
-| Builder | `claude-opus-4.8` | high |
-| Verifier | `gpt-5.4` | high |
-
-Default is **2 reviewers**; add `--thorough` for a 3rd. Verifier model is always
-different from the builder. Override any model by stating it in your request.
+**Modes:** default = 2 reviewers + sonnet builder + mini verifier. `--fast` = 1 reviewer, flash builder, no verifier. `--thorough` = 3 reviewers, opus builder. Override any model by stating it in your request.
 
 ## Example invocations
 
 ```
 # Review uncommitted changes
 review and fix
+
+# Fast mode (1 reviewer, lighter builder, no verifier)
+rfv --fast
 
 # Review specific path
 /review-fix-verify src/api/

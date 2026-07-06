@@ -1,7 +1,7 @@
 ---
 name: review-fix-verify
 description: >
-  Multi-model review → fix → verify workflow. Launches 2 (or 3 with --thorough) parallel code-review subagents on different fast models that read surrounding code for context, consolidates findings with orchestrator reasoning, fixes with a bounded builder agent, then verifies the fix diff with a fresh reviewer on a different model. Bounded iteration prevents runaway loops.
+  Multi-model review → fix → verify workflow. Launches 2 parallel code-review subagents (claude-sonnet-4.6 + gpt-5.3-codex) that read surrounding code for context, consolidates findings with orchestrator reasoning, fixes with a bounded builder agent (claude-sonnet-4.6), then verifies the fix diff with a fresh reviewer (gpt-5.4-mini). --fast: 1 reviewer, cheapest builder, no verifier. --thorough: 3 reviewers, opus builder. Bounded iteration prevents runaway loops.
   Use when user says "review and fix", "review fix verify", "rfv", "/review-fix-verify", "multi-model review", "parallel code review", or "review my changes".
 ---
 
@@ -13,35 +13,34 @@ Automates a proven multi-model "review → reason → fix → verify → iterate
 
 ## Activation triggers
 
-- `/review-fix-verify [path|range] [--thorough]`
+- `/review-fix-verify [path|range] [--thorough] [--fast]`
 - "review and fix", "review fix verify", "rfv"
 - "multi-model review", "parallel code review"
 - "review my changes [and fix them]"
 
 `--thorough` (or "be thorough") adds a 3rd reviewer. Default is 2 reviewers.
 
+`--fast` (or "be fast", "quick review") uses 1 reviewer, a lighter builder model, and skips the verifier phase. Best for solo devs reviewing small, low-risk changes.
+
 ---
 
 ## Model matrix (configurable)
 
-Reviewers scan for patterns — they get **fast** models at medium effort. Builder and
-verifier reason deeply — they get **strong** models.
+| Role | Model | Effort | Notes |
+|------|-------|--------|-------|
+| Reviewer A | `claude-sonnet-4.6` | medium | primary reviewer |
+| Reviewer B | `gpt-5.3-codex` | medium | primary reviewer |
+| Reviewer C (`--thorough`) | `gemini-3.5-flash` | medium | cheap 3rd reviewer |
+| Reviewer (`--fast`) | `gemini-3.5-flash` | low | sole reviewer in fast mode |
+| Builder | `claude-sonnet-4.6` | medium | default |
+| Builder (`--thorough`) | `claude-opus-4.8` | high | deep reasoning for complex fixes |
+| Builder (`--fast`) | `gemini-3.5-flash` | low | cheapest, for trivial fixes |
+| Verifier | `gpt-5.4-mini` | medium | fix diffs are small; MUST differ from builder |
 
-| Role | Default model | Effort | Notes |
-|------|--------------|--------|-------|
-| Reviewer A | `gemini-3.5-flash` | medium | fast scan |
-| Reviewer B | `gpt-5.4-mini` | medium | fast scan |
-| Reviewer C | `claude-sonnet-4.6` | — | ONLY on `--thorough` (3rd reviewer) |
-| Builder | `claude-opus-4.8` | high | deep reasoning |
-| Verifier | `gpt-5.4` | high | MUST differ from builder model |
+**Modes:** default = 2 reviewers + sonnet builder + mini verifier. `--fast` = 1 reviewer, flash builder, no verifier. `--thorough` = 3 reviewers, opus builder.
 
-**Default: 2 reviewers** (A + B). Add reviewer C only when the caller says
-`--thorough` or "be thorough" — 3 parallel reviewers cost ~33% more wall-clock for
-mostly-overlapping findings.
-
-Override any model by stating it: "use gemini for the builder", "use codex as reviewer B".
-If a model is unavailable at runtime, drop that reviewer (a single reviewer still works)
-and note it in the summary.
+Override any model by stating it: "use opus for the builder", "use codex as reviewer A".
+If a model is unavailable at runtime, drop that reviewer (a single reviewer still works) and note it in the summary.
 
 ---
 
@@ -81,40 +80,24 @@ and note it in the summary.
 
 ### Phase 1 — Fan-out review (PARALLEL)
 
-Launch **2 `code-review` subagents in parallel** (3 on `--thorough`) in a SINGLE
-`task` call block, each pinned to a different model (see matrix) with `effort: medium`.
+Launch **2 `code-review` subagents in parallel** (3 on `--thorough`, 1 on `--fast`) in a SINGLE
+`task` call block. Use the model matrix above — `--fast` reviewer uses `gemini-3.5-flash` at `effort: low`.
 Inline the diff from Phase 0 into each prompt. Use this template:
 
-> **System role:** You are a senior engineer performing a focused code review. You will NOT modify any code.
+> You are a senior engineer doing a focused code review. Do NOT modify any code.
 >
-> **The diff under review (starting pointer — do NOT treat in isolation):**
+> **Diff (starting point — read surrounding files before flagging):**
 > ```diff
 > {{DIFF_FROM_PHASE_0}}
 > ```
 >
-> **CRITICAL — read for context before flagging.** A diff alone produces false
-> positives. For any suspected issue, OPEN the surrounding file(s) and read the
-> enclosing function, its callers, and nearby invariants. Confirm the bug is real
-> *in context* — e.g., check there is no upstream nil-guard, no caller-side lock,
-> no validation that already handles it. Only report issues you have confirmed
-> against the actual code, not just the diff hunk.
+> **CRITICAL:** For any suspected issue, open the surrounding file(s) and confirm the bug is real in context before reporting. A diff alone produces false positives.
 >
-> **Your job — HIGH SIGNAL ONLY:**
-> Report ONLY: real bugs, logic errors, race conditions, security vulnerabilities, correctness failures, resource leaks, null/panic risks, and broken invariants.
+> **Report ONLY:** bugs, logic errors, races, security vulnerabilities, correctness failures, resource leaks, null/panic risks, broken invariants. Nothing else — no style, naming, whitespace, micro-optimizations, or "consider X instead of Y".
 >
-> **Explicitly forbidden:** style, formatting, naming conventions, whitespace, "consider using X instead of Y" suggestions, performance micro-optimizations without a concrete bottleneck, or anything that doesn't risk incorrect behavior or a crash.
+> If nothing meets the bar: say "NO FINDINGS".
 >
-> **For each finding, provide:**
-> 1. `file:line` (exact location)
-> 2. Severity: CRITICAL / HIGH / MEDIUM / LOW
-> 3. Category: bug / race / security / correctness / resource-leak / other
-> 4. Problem: one sentence, specific
-> 5. Concrete fix: the minimal code change that resolves it
-> 6. Context checked: one phrase on what surrounding code you read to confirm it's real
->
-> Number your findings. If you find nothing that meets the bar, say "NO FINDINGS".
->
-> **Required output format — one block per finding (machine-parseable):**
+> **Output — one block per finding:**
 > ```
 > Finding N
 > Location: <file>:<line>
@@ -122,7 +105,6 @@ Inline the diff from Phase 0 into each prompt. Use this template:
 > Category: bug|race|security|correctness|resource-leak|other
 > Problem: <one sentence>
 > Fix: <minimal code change>
-> Context checked: <one phrase — what surrounding code confirmed this is real>
 > ```
 
 Collect all reviewer responses. If ALL reviewers return "NO FINDINGS", skip to Phase 6.
@@ -138,7 +120,7 @@ Collect all reviewer responses. If ALL reviewers return "NO FINDINGS", skip to P
 2. **Re-calibrate severity.** For each unique finding:
    - Does it actually cause incorrect behavior in a realistic code path?
    - Could it be a false positive (e.g., intentional design, handled upstream)?
-   - How many of the 3 reviewers flagged it? (agreement → higher confidence)
+   - How many reviewers flagged it? (agreement → higher confidence)
 
 3. **Render a verdict table:**
 
@@ -157,7 +139,7 @@ If zero findings accepted: report to user, skip to Phase 6 (no fix needed).
 
 ### Phase 3 — Fix
 
-Launch **ONE `general-purpose` builder subagent** (`model: claude-opus-4.8`, `reasoning_effort: high`). Use this prompt template:
+Launch **ONE `general-purpose` builder subagent** (use model matrix: `claude-sonnet-4.6` medium by default, `claude-opus-4.8` high on `--thorough`, `gemini-3.5-flash` low on `--fast`). Use this prompt template:
 
 > **Your mission:** Fix the following verified bugs in the codebase. Edit code, add/update tests if needed, then run the test suite until green.
 >
@@ -188,7 +170,9 @@ Wait for builder to complete. Capture the summary.
 
 ### Phase 4 — Verify
 
-Launch **ONE `code-review` verifier subagent** (`model: gpt-5.4` — MUST differ from builder model). Use this prompt template:
+**In `--fast` mode: skip this phase entirely. Proceed directly to Phase 6.**
+
+Launch **ONE `code-review` verifier subagent** (`model: gpt-5.4-mini`, `effort: medium` — MUST differ from builder model). Use this prompt template:
 
 > **Scope:** The uncommitted fix diff — run `git diff` to get it. Review ONLY the changes in that diff.
 >
@@ -273,14 +257,6 @@ Track iteration count (starts at 0, max = 2).
 
 ---
 
-## Optional: custom agent personas
-
-The Copilot CLI task tool already supports `model` overrides on built-in agent types (`code-review`, `general-purpose`). This skill uses that directly — no separate agent definition files needed.
-
-If you want named reviewer/verifier personas (e.g., to reuse across other skills), you can define them in your agents directory (`${AGENTS_DIR:-$HOME/.agents}/agents/`) when that directory is supported by your CLI version. Check the `manage-plugins` skill or `/help` for the current agent definition format. If that directory isn't supported by your install, the skill-only approach here is sufficient.
-
----
-
 ## Security & Safety constraints
 
 These apply to the orchestrator and all subagents throughout the workflow.
@@ -302,14 +278,3 @@ These apply to the orchestrator and all subagents throughout the workflow.
 **Breaking changes**
 - If an accepted finding requires changing a public interface or removing a symbol, the builder must note this explicitly and suggest a deprecation path rather than a silent removal.
 
----
-
-## Notes
-
-- Verifier always uses a model **different** from the builder to avoid shared blind spots.
-- Verifier reviews **only the fix diff**, not the full codebase — keeps scope tight.
-- Reviewers read surrounding code for context (not just the diff hunk) to avoid false positives.
-- Reviewers use fast models at medium effort; builder/verifier use strong models at high effort.
-- `rfv-prep.sh` runs once in Phase 0 and computes the diff + test command — reviewers never re-run git.
-- The builder is bounded (max 3 test-fix cycles) and must NOT commit. Orchestrator owns the commit decision.
-- Iteration is bounded (max 2) and carries prior builder+verifier context so fixes aren't undone.
