@@ -72,7 +72,9 @@ test file to keep tests consistent.
 |------|------|
 | `SKILL.md` | Authoritative execution contract: phases, prompts, model matrix, guardrails |
 | `skills/review-fix-verify/README.md` | User-facing behavior, examples, limitations |
-| `README.md` (root) | Installation, compatibility, security, maintenance |
+| `README.md` (root) | Overview, quick install, security summary |
+| `docs/installation.md` | Full install methods, uninstall, compatibility |
+| `docs/development.md` | Testing, contributing, versioning |
 
 If you change the model matrix, `rfv-prep.sh` output format, or phase logic, update
 `SKILL.md` first. Then check whether `README.md` or the skill `README.md` reference
