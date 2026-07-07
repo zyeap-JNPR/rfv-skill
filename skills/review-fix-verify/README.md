@@ -28,14 +28,14 @@ The critical insight: **the verifier reviews the fix diff, not the original code
 
 | Role | Model | Effort |
 |------|-------|--------|
-| Reviewer A | `claude-sonnet-4.6` | medium |
-| Reviewer B | `gpt-5.3-codex` | medium |
-| Reviewer C (`--thorough`) | `gemini-3.5-flash` | medium |
+| Reviewer A | `claude-sonnet-4.6` | low (medium on `--thorough`) |
+| Reviewer B | `gpt-5.3-codex` | low (medium on `--thorough`) |
+| Reviewer C (`--thorough`) | `gemini-3.5-flash` | low |
 | Reviewer (`--fast`) | `gemini-3.5-flash` | low |
 | Builder | `claude-sonnet-4.6` | medium |
 | Builder (`--thorough`) | `claude-opus-4.8` | high |
 | Builder (`--fast`) | `gemini-3.5-flash` | low |
-| Verifier | `gpt-5.4-mini` | medium |
+| Verifier | `gpt-5.4-mini` | low |
 
 **Modes:** default = 2 reviewers + sonnet builder + mini verifier. `--fast` = 1 reviewer, flash builder, no verifier. `--thorough` = 3 reviewers, opus builder. Override any model by stating it in your request.
 

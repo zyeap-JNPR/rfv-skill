@@ -28,14 +28,14 @@ Automates a proven multi-model "review → reason → fix → verify → iterate
 
 | Role | Model | Effort | Notes |
 |------|-------|--------|-------|
-| Reviewer A | `claude-sonnet-4.6` | medium | primary reviewer |
-| Reviewer B | `gpt-5.3-codex` | medium | primary reviewer |
-| Reviewer C (`--thorough`) | `gemini-3.5-flash` | medium | cheap 3rd reviewer |
+| Reviewer A | `claude-sonnet-4.6` | low | medium on `--thorough` |
+| Reviewer B | `gpt-5.3-codex` | low | medium on `--thorough` |
+| Reviewer C (`--thorough`) | `gemini-3.5-flash` | low | cheap 3rd reviewer |
 | Reviewer (`--fast`) | `gemini-3.5-flash` | low | sole reviewer in fast mode |
 | Builder | `claude-sonnet-4.6` | medium | default |
 | Builder (`--thorough`) | `claude-opus-4.8` | high | deep reasoning for complex fixes |
 | Builder (`--fast`) | `gemini-3.5-flash` | low | cheapest, for trivial fixes |
-| Verifier | `gpt-5.4-mini` | medium | fix diffs are small; MUST differ from builder |
+| Verifier | `gpt-5.4-mini` | low | fix diffs are small; MUST differ from builder |
 
 **Modes:** default = 2 reviewers + sonnet builder + mini verifier. `--fast` = 1 reviewer, flash builder, no verifier. `--thorough` = 3 reviewers, opus builder.
 
@@ -76,22 +76,34 @@ If a model is unavailable at runtime, drop that reviewer (a single reviewer stil
    as a *starting pointer* in the reviewer prompts (Phase 1). Report scope + line
    count + test command before proceeding.
 
+5. **Pre-capture file context for reviewers.** If `RFV_CHANGED_LINES` ≤ 400, also
+   capture the full content of each changed file (from `git diff --name-only`) and
+   store it. Cap at 5 files × 300 lines each. Inline this as `{{FILE_CONTEXT}}` in
+   Phase 1 reviewer prompts so reviewers don't need to open files themselves — this
+   eliminates per-reviewer file I/O tool calls and speeds up Phase 1 significantly.
+   If the diff is large (> 400 lines) or there are > 5 changed files, skip this step
+   and keep the "read surrounding files" instruction in the reviewer prompt instead.
+
 ---
 
 ### Phase 1 — Fan-out review (PARALLEL)
 
 Launch **2 `code-review` subagents in parallel** (3 on `--thorough`, 1 on `--fast`) in a SINGLE
-`task` call block. Use the model matrix above — `--fast` reviewer uses `gemini-3.5-flash` at `effort: low`.
-Inline the diff from Phase 0 into each prompt. Use this template:
+`task` call block. Use the model matrix above — default reviewers use `effort: low`; `--thorough`
+uses `effort: medium`. Inline the diff and file context from Phase 0. Use this template:
 
 > You are a senior engineer doing a focused code review. Do NOT modify any code.
 >
-> **Diff (starting point — read surrounding files before flagging):**
+> **Diff:**
 > ```diff
 > {{DIFF_FROM_PHASE_0}}
 > ```
 >
-> **CRITICAL:** For any suspected issue, open the surrounding file(s) and confirm the bug is real in context before reporting. A diff alone produces false positives.
+> **Full file context (changed files — use this instead of opening files yourself):**
+> {{FILE_CONTEXT}}
+> *(If FILE_CONTEXT is "(not pre-captured — read surrounding files as needed)", open the relevant files before flagging.)*
+>
+> **CRITICAL:** Confirm every suspected issue is real in context before reporting. A diff alone produces false positives.
 >
 > **Report ONLY:** bugs, logic errors, races, security vulnerabilities, correctness failures, resource leaks, null/panic risks, broken invariants. Nothing else — no style, naming, whitespace, micro-optimizations, or "consider X instead of Y".
 >
@@ -184,9 +196,14 @@ Wait for builder to complete. Capture the summary.
 
 **In `--fast` mode: skip this phase entirely. Proceed directly to Phase 6.**
 
-Launch **ONE `code-review` verifier subagent** (`model: gpt-5.4-mini`, `effort: medium` — MUST differ from builder model). Use this prompt template:
+After the builder reports done, run `git diff HEAD` yourself and capture the fix diff. Then
+launch **ONE `code-review` verifier subagent** (`model: gpt-5.4-mini`, `effort: low` — MUST
+differ from builder model). Use this prompt template:
 
-> **Scope:** The uncommitted fix diff — run `git diff HEAD` to get it. Review ONLY the changes in that diff.
+> **Fix diff (review ONLY these changes):**
+> ```diff
+> {{FIX_DIFF_FROM_ORCHESTRATOR}}
+> ```
 >
 > **Your job:**
 > 1. **Verify each fix:** Confirm the original finding (listed below) is actually resolved. If a fix is incomplete or wrong, say so.
