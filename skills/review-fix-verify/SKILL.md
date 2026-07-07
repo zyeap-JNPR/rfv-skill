@@ -135,6 +135,18 @@ Collect all reviewer responses. If ALL reviewers return "NO FINDINGS", skip to P
 
 If zero findings accepted: report to user, skip to Phase 6 (no fix needed).
 
+5. **Refactor suggestions (optional appendix).** If any REJECTED findings were improvement or
+   refactoring suggestions (not bugs), collect them in a short non-blocking table shown to the
+   user at the end of Phase 2. Do NOT pass these to the builder. Format:
+
+```
+### Suggestions (not actioned by this run)
+| # | file:line | Suggestion |
+|---|-----------|------------|
+```
+
+   Skip this table entirely if no refactor suggestions surfaced.
+
 ---
 
 ### Phase 3 — Fix
@@ -174,7 +186,7 @@ Wait for builder to complete. Capture the summary.
 
 Launch **ONE `code-review` verifier subagent** (`model: gpt-5.4-mini`, `effort: medium` — MUST differ from builder model). Use this prompt template:
 
-> **Scope:** The uncommitted fix diff — run `git diff` to get it. Review ONLY the changes in that diff.
+> **Scope:** The uncommitted fix diff — run `git diff HEAD` to get it. Review ONLY the changes in that diff.
 >
 > **Your job:**
 > 1. **Verify each fix:** Confirm the original finding (listed below) is actually resolved. If a fix is incomplete or wrong, say so.
@@ -201,6 +213,14 @@ Collect verifier response.
 Track iteration count (starts at 0, max = 2).
 
 **If verifier reports new real issues OR unresolved findings:**
+
+**Fast path — orchestrator inline fix:** If the new/unresolved issues are small (≤ 10 lines total,
+clearly isolated, no design ambiguity), the orchestrator MAY apply the fix directly using its own
+edit tools, then re-run `{{TEST_COMMAND}}` to confirm green, and skip spawning a new builder subagent.
+This avoids a full builder cycle for trivial regressions. If tests go red or the fix is unclear,
+fall through to the full builder path below.
+
+**Full builder path:**
 - If iteration count < max: increment count, go back to Phase 3. The new builder is
   **stateless** — it does not remember the prior iteration. In its prompt you MUST include:
   1. The new/unresolved findings as the numbered spec.

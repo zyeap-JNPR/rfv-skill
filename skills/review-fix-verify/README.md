@@ -9,10 +9,10 @@ Multi-model "review → fix → verify → iterate" workflow as a Copilot CLI sk
 ## What it does
 
 1. **Fan-out review** — launches 2 `code-review` subagents (3 with `--thorough`) in parallel, each on a different fast model, demanding high-signal findings only (real bugs, races, security issues — no style/nits). Reviewers read surrounding code for context to cut false positives.
-2. **Consolidate** — orchestrator deduplicates findings, re-calibrates severity with own judgment, and produces an explicit ACCEPT/REJECT verdict table.
+2. **Consolidate** — orchestrator deduplicates findings, re-calibrates severity with own judgment, and produces an explicit ACCEPT/REJECT verdict table. Refactoring suggestions from reviewers are surfaced as a non-blocking appendix (not sent to the builder).
 3. **Fix** — one `general-purpose` builder subagent applies the accepted fixes and runs the repo's own test suite until green.
-4. **Verify** — a `code-review` verifier on a _different_ model than the builder reviews **only the fix diff**, checking each fix is correct and looking hard for regressions.
-5. **Iterate** — if the verifier finds real issues, loops back to Fix (max 2 iterations).
+4. **Verify** — a `code-review` verifier on a _different_ model than the builder reviews **only the fix diff** (`git diff HEAD`), checking each fix is correct and looking hard for regressions.
+5. **Iterate** — if the verifier finds real issues, the orchestrator first tries an inline fix for small/obvious regressions (≤ 10 lines); otherwise loops back to a new builder subagent (max 2 iterations).
 6. **Finalize** — runs the full test suite, then stops and summarizes. **Commit is opt-in** — the default is to stop and let you commit manually.
 
 The critical insight: **the verifier reviews the fix diff, not the original code.** In real runs this has caught concurrency regressions that the fix itself introduced.
