@@ -1,103 +1,78 @@
 # Installation
 
-GitHub Copilot (both the **CLI** and the **VS Code** extension) discovers agent
-skills in an `.agents/skills/` directory:
+Copilot discovers skills in:
 
-| Scope | Directory | Applies to |
-|-------|-----------|-----------|
-| **Per-project** | `<your-repo>/.agents/skills/` | only that repository |
-| **Global (all projects)** | `~/.agents/skills/` | every project on your machine |
+| Scope | Directory |
+|-------|-----------|
+| Project | `<repo>/.agents/skills/` |
+| Global | `~/.agents/skills/` |
 
----
+## Skills CLI
 
-## Method A — `skills` CLI (recommended)
-
-Installs the skill and tracks the source repo so you can pull updates later.
+Recommended because it records the source for updates:
 
 ```bash
-# Global install (all projects)
+# Global
 npx skills add zyeap-JNPR/rfv-skill -g -s review-fix-verify -y
 
-# …or per-project (run from inside the target repo)
+# Current project
 npx skills add zyeap-JNPR/rfv-skill -p -s review-fix-verify -y
 
-# See what's installed
 npx skills list
-
-# Pull the latest version later
 npx skills update review-fix-verify
 ```
 
-> The `skills` CLI writes a lock file (`.skill-lock.json`) recording the source
-> repo and a content hash, which is what powers `npx skills update`.
-
----
-
-## Method B — Git clone + symlink (for development)
-
-Keep a single git working copy and symlink it into the agent skills directory,
-so local edits are live and `git pull` updates the skill instantly.
+## Development symlink
 
 ```bash
-# 1. Clone the canonical copy somewhere you keep repos
 git clone https://github.com/zyeap-JNPR/rfv-skill.git ~/work/github/rfv-skill
-
-# 2. Symlink the skill into your global agent skills dir
 mkdir -p ~/.agents/skills
 ln -s ~/work/github/rfv-skill/skills/review-fix-verify \
-      ~/.agents/skills/review-fix-verify
-
-# Update anytime:
-git -C ~/work/github/rfv-skill pull
+  ~/.agents/skills/review-fix-verify
 ```
 
-For a **per-project** symlink instead, replace the target with
-`<your-repo>/.agents/skills/review-fix-verify`.
-
----
-
-## VS Code notes
-
-The VS Code Copilot extension reads the same `.agents/skills/` locations as the
-CLI. After installing, reload the VS Code window so the extension re-scans skills.
-Trigger the skill in Copilot Chat with `/review-fix-verify` or a phrase like
-"review and fix".
-
-## Copilot CLI notes
-
-No extra step — the CLI auto-discovers skills in `.agents/skills/` on startup.
-Verify with:
+Edits become live immediately. Update with:
 
 ```bash
-ls ~/.agents/skills/review-fix-verify   # files present (or a valid symlink)
+git -C ~/work/github/rfv-skill pull --ff-only
 ```
 
-Then invoke inside a git repo with `/review-fix-verify [path|range]`,
-`review and fix`, or `rfv`.
+For project-only use, place the symlink under
+`<repo>/.agents/skills/review-fix-verify`.
 
----
+## Use
 
-## Uninstall
+Reload VS Code after installation; Copilot CLI discovers the skill on startup.
+Invoke inside a Git repository:
+
+```text
+/review-fix-verify [path|range]
+review and fix
+rfv --fast
+rfv --thorough
+```
+
+## Remove
 
 ```bash
-# Method A
+# Skills CLI
 npx skills remove review-fix-verify
 
-# Method B
-rm ~/.agents/skills/review-fix-verify        # removes the symlink only
+# Development symlink
+rm ~/.agents/skills/review-fix-verify
 ```
 
----
+The second command removes only the symlink.
 
 ## Compatibility
 
 | Requirement | Notes |
 |-------------|-------|
-| Shell | `bash` ≥ 4.0 (uses arrays, process substitution) |
-| Git | ≥ 2.0 |
-| `jq` | Optional but recommended for `package.json` detection |
-| OS | macOS, Linux. Windows: use WSL2 or Git Bash |
-| GNU vs BSD tools | `awk`, `grep`, `sed` use only POSIX-compatible flags |
+| Bash | 3.2+ |
+| Git | 2.0+ |
+| `jq` | Optional; required only for reliable Node/Composer script parsing |
+| OS | macOS, Linux; Windows through WSL2 or Git Bash |
+| Copilot | `task` model overrides and `code-review` agent support |
 
-The skill (SKILL.md) requires a Copilot CLI or VS Code Copilot extension that supports
-the `task` tool with `model` overrides and `agent_type: code-review`.
+The script uses Bash arrays and process substitution plus POSIX-compatible
+`awk`, `grep`, `sed`, and `tr` options.

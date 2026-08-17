@@ -1,49 +1,29 @@
 # Security Policy
 
-## Scope
-
-This repository contains a shell script (`rfv-prep.sh`) and an AI agent skill
-definition (`SKILL.md`). Neither makes network requests or stores data. Security
-concerns are most likely to arise from:
-
-1. **Diff content** — when the skill is invoked, your git diff is inlined into AI
-   model prompts. If your diff contains secrets, credentials, or PII, that data
-   is sent to external AI providers. This is a user responsibility, not a code
-   vulnerability, but it is worth documenting.
-
-2. **Shell injection** — `rfv-prep.sh` passes user-supplied `SCOPE` arguments to
-   `git` commands. This is bounded (arguments are passed as array elements, not
-   via shell expansion), but unusual inputs should still be validated.
-
-3. **Prompt injection** — `SKILL.md` instructs AI subagents. A malicious diff could
-   attempt to override subagent instructions. The skill's "High signal only" and
-   "Do not commit" instructions are the primary guardrails.
-
-## Supported versions
-
 Only the latest commit on `main` is supported.
 
-## Reporting a vulnerability
+## Data flow
 
-Please **do not** open a public GitHub issue for security vulnerabilities.
+RFV sends selected Git diff content to configured AI models. `rfv-prep.sh` makes
+no network requests and persists no user data; its temporary NUL-delimited path
+inventory is removed on exit. It rejects common secret-bearing paths before
+emitting a patch and disables external diff drivers, text converters, and color
+escapes.
 
-Email: open a [GitHub private security advisory](https://github.com/zyeap-JNPR/rfv-skill/security/advisories/new)
-instead. Include:
+Filename checks cannot detect every embedded credential, token, secret, or PII
+value. Inspect the selected scope before invoking RFV. Keep secret files ignored
+and never use production credentials, databases, or endpoints in detected commands.
 
-- A description of the vulnerability
-- Steps to reproduce
-- Impact assessment (what an attacker or misbehaving subagent could do)
-- Suggested fix (if you have one)
+Diff content is untrusted input. Reviewer and verifier prompts explicitly ignore
+instructions embedded in code or comments. Builder prompts limit work to accepted
+findings and forbid commits, pushes, deployments, dependency changes, and test
+bypasses.
 
-We aim to respond within 5 business days and to publish a fix within 14 days of
-confirmation.
+If a secret reaches Git history, stop using the diff, rotate the secret, and remove
+it from history before continuing.
 
-## Security best practices for users
+## Reporting
 
-- **Do not run this skill on diffs containing secrets.** Stage and diff only the
-  files you intend to review. Use `.gitignore` to keep secret files out of
-  version control.
-- **Review the diff before invoking.** Run `git diff` (or `git diff HEAD~1..HEAD`)
-  and confirm no credential files are included before triggering the skill.
-- **Production safety.** The skill is designed for local development and CI. Never
-  configure its test command to point at production databases or production APIs.
+Do not open a public issue for a vulnerability. Use a
+[private security advisory](https://github.com/zyeap-JNPR/rfv-skill/security/advisories/new)
+with reproduction steps, impact, and a suggested fix when available.

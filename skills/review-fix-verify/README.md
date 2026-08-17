@@ -1,159 +1,123 @@
 # review-fix-verify
 
-Multi-model "review → fix → verify → iterate" workflow as a Copilot CLI skill.
+Multi-model review -> fix -> verify workflow for Git changes.
+[`SKILL.md`](SKILL.md) is the execution contract; this file is user-facing.
 
-> **Source of truth:** [`SKILL.md`](SKILL.md) is the authoritative execution contract
-> (phases, prompts, model matrix). This README describes user-facing behavior and
-> limitations. When they diverge, `SKILL.md` wins.
+## Workflow
 
-## What it does
+1. **Preflight** - scopes and caps the diff, rejects incomplete or sensitive input,
+   and detects repository commands.
+2. **Review** - runs Sonnet and Terra reviewers in parallel; correctness findings
+   only.
+3. **Consolidate** - validates, deduplicates, and accepts or rejects each finding.
+4. **Fix** - runs one bounded Sonnet builder against accepted findings.
+5. **Verify** - compares the worktree to a pre-fix snapshot so Terra reviews only
+   changes made by the fix cycle.
+6. **Iterate** - retries at most twice, then summarizes. Commit is opt-in; push is
+   never automatic.
 
-1. **Fan-out review** — launches 2 `code-review` subagents in parallel, demanding high-signal findings only (real bugs, races, security issues — no style/nits). `--thorough` raises their effort rather than adding a duplicate-model review.
-2. **Consolidate** — orchestrator deduplicates findings, re-calibrates severity with own judgment, and produces an explicit ACCEPT/REJECT verdict table. Refactoring suggestions from reviewers are surfaced as a non-blocking appendix (not sent to the builder).
-3. **Fix** — one `general-purpose` builder subagent applies the accepted fixes and runs the repo's own test suite until green.
-4. **Verify** — a `code-review` verifier on a _different_ model than the builder reviews **only the fix diff** (`git diff HEAD`), checking each fix is correct and looking hard for regressions.
-5. **Iterate** — if the verifier finds real issues, the orchestrator first tries an inline fix for small/obvious regressions (≤ 10 lines); otherwise loops back to a new builder subagent (max 2 iterations).
-6. **Finalize** — runs the full test suite, then stops and summarizes. **Commit is opt-in** — the default is to stop and let you commit manually.
+## Invocation
 
-The critical insight: **the verifier reviews the fix diff, not the original code.** In real runs this has caught concurrency regressions that the fix itself introduced.
-
-## When it triggers
-
-- `/review-fix-verify [path|range]`
-- "review and fix", "review fix verify", "rfv"
-- "multi-model review", "parallel code review"
-- "review my changes [and fix them]"
-
-## Model matrix
-
-| Role | Model | Effort |
-|------|-------|--------|
-| Reviewer A | `claude-sonnet-5` | low (medium on `--thorough`) |
-| Reviewer B | `gpt-5.6-terra` | low (medium on `--thorough`) |
-| Reviewer (`--fast`) | `gpt-5.6-terra` | low |
-| Builder | `claude-sonnet-5` | medium |
-| Builder (`--thorough`) | `claude-sonnet-5` | high |
-| Builder (`--fast`) | `claude-sonnet-5` | low |
-| Verifier | `gpt-5.6-terra` | low |
-
-**Modes:** default = 2 low-effort reviewers + sonnet builder + terra verifier. `--fast` = 1 reviewer, lighter sonnet builder, no verifier. `--thorough` = 2 medium-effort reviewers + higher-effort sonnet builder. Override any model by stating it in your request.
-
-## Example invocations
-
-```
-# Review uncommitted changes
+```text
 review and fix
-
-# Fast mode (1 reviewer, lighter builder, no verifier)
 rfv --fast
-
-# Review specific path
 /review-fix-verify src/api/
-
-# Review last 3 commits
 /review-fix-verify HEAD~3..HEAD
-
-# With model override
-review fix verify, use sonnet for the builder
-
-# Full invocation
-rfv — focus on src/payments/, use terra as reviewer B
+rfv src/payments/ --thorough
 ```
 
-## Diff scope (in order of priority)
+Triggers also include "review fix verify", "multi-model review", "parallel code
+review", and "review my changes".
 
-1. Caller-specified path or range
-2. Uncommitted changes (`git diff HEAD`)
-3. `git diff HEAD~1..HEAD` if nothing uncommitted and 2+ commits exist
+## Modes
 
-## What success looks like
+| Mode | Review | Builder | Verify |
+|------|--------|---------|--------|
+| Default | Sonnet + Terra, low | Sonnet, medium | Terra, low |
+| `--fast` | Terra, low | Sonnet, low | skipped |
+| `--thorough` | Sonnet + Terra, medium | Sonnet, high | Terra, low |
 
-A successful run produces a summary like:
+Models: `claude-sonnet-5` and `gpt-5.6-terra`. Explicit overrides are resolved
+before review and rejected if builder and verifier would match. `--fast` and
+`--thorough` cannot be combined.
 
-```
-## review-fix-verify — Summary
+## Diff scope
 
-Scope: uncommitted changes (42 lines)
+Priority:
+
+1. Explicit path or Git range
+2. Staged and unstaged tracked changes
+3. `HEAD~1..HEAD` when the working tree is clean
+
+Untracked files are absent from `git diff`. Working-tree reviews stop and name the
+first relevant untracked file; stage it before rerunning. Explicit ranges ignore
+untracked working-tree files.
+
+The preflight rejects common sensitive paths such as `.env`, private keys,
+credential files, and package-manager auth files before emitting diff contents.
+Template suffixes (`.example`, `.sample`, `.template`) remain reviewable.
+
+## Size and context
+
+- Under 200 changed lines: ideal.
+- 200-800: supported; reviewers open only code needed to validate findings.
+- Over 800: RFV asks whether to narrow by directory or commit.
+
+Prompt diff output is capped by `RFV_MAX_DIFF_LINES` (default `500`). The value
+must be a positive integer. Increase it only when the extra context is necessary.
+
+## Command detection
+
+`rfv-prep.sh` finds the nearest project root for the invocation or path scope and
+emits `RFV_COMMAND_DIR` plus structured `RFV_*_CMD` markers. `RFV_TEST_CMD` is
+authoritative; lint, typecheck, check, and build commands are advisory.
+
+Supported roots:
+
+- Node (`package.json`; npm, pnpm, Yarn, or Bun)
+- Make
+- Go, Rust, Python
+- Maven, Gradle, .NET, Swift
+- Ruby, PHP Composer, Elixir
+
+Node parsing uses `jq`. Monorepos, polyglot roots, and custom test harnesses may
+need an explicit test command.
+
+## Review standard
+
+Accepted findings must be real bugs, correctness failures, races, vulnerabilities,
+resource leaks, panic/null risks, or broken invariants. Style, naming,
+documentation, speculative refactors, and micro-optimizations are rejected.
+
+The builder gets only accepted findings and is instructed not to commit, push,
+deploy, alter dependencies, bypass checks, or use production credentials. Tests
+get at most three fix cycles; fix/verify gets at most two iterations.
+
+## Result
+
+```text
+## review-fix-verify - Summary
+Scope: uncommitted changes
 Iterations: 1
 
 Findings reviewed
-| # | file:line      | Severity | Decision |
-|---|----------------|----------|----------|
-| 1 | src/auth.go:88 | HIGH     | ACCEPT   |
-| 2 | src/util.py:12 | LOW      | REJECT   |
+| # | file:line | Severity | Decision |
 
 Fixes applied
-- src/auth.go:88 — added nil check before pointer dereference
+...
 
 Verification
-Finding 1: VERIFIED ✓
-No regressions found.
+...
 
 Test result
-PASS — all 124 tests green
+PASS - concise output
 ```
 
-The finding table shows every issue each reviewer raised and the orchestrator's
-explicit ACCEPT/REJECT decision with reasoning. Style nits and false positives are
-rejected before they ever reach the builder.
+If reviewers find nothing, RFV stops without running tests or asking to commit.
 
-## Examples of accepted vs rejected findings
+## Limitations
 
-**Accepted (real bugs):**
-- Nil pointer dereference on an untested code path
-- Race condition: shared map written from two goroutines without a lock
-- SQL query built with string concatenation (injection risk)
-- Error return silently discarded in a critical path
-
-**Rejected (not actionable by this skill):**
-- "Consider using `const` instead of `let`" — style preference, not a bug
-- "This loop could be rewritten as a `map()`" — refactor suggestion
-- "Missing docstring" — documentation, not correctness
-- Flagging a nil-check as missing when the caller always provides a non-nil value
-
-## How large is too large?
-
-- **< 200 lines** — ideal. All reviewers get the full diff plus surrounding context.
-- **200–800 lines** — manageable. Reviewers will read carefully but may miss edge interactions.
-- **> 800 lines** — `rfv-prep.sh` emits `RFV_WARN: large diff`. The skill will warn
-  you and offer to scope down. You can proceed, but quality degrades as reviewers
-  must skim. Better approach: split by directory (`/review-fix-verify src/api/`) or
-  by commit range (`/review-fix-verify HEAD~2..HEAD~1`).
-
-Diff output is also capped at `RFV_MAX_DIFF_LINES` (default 500) in the prompt to
-avoid token budget exhaustion. Set the env var to increase the cap if needed.
-
-## When not to use this skill
-
-- **No git history** — the skill requires a git repo with at least one commit.
-- **Pure refactors with no behavior change** — reviewers will find nothing meaningful
-  to flag. Use a regular code review instead.
-- **Trivial one-line fixes** — the overhead of 2–3 model reviews isn't worth it.
-- **Diffs containing secrets** — if `.env` files or credential files are in scope,
-  remove them from the diff first. See the Security section in `SKILL.md`.
-- **Production deployments** — the skill runs tests locally. It does not verify
-  behavior in production and must never be used to drive production actions.
-
-## Known limitations
-
-- **Model availability** — if a reviewer model is unavailable at runtime, that reviewer
-  is dropped. A single reviewer can still produce useful output.
-- **Test detection** — `rfv-prep.sh` auto-detects the test command for 14+ ecosystems,
-  but exotic setups (monorepos, custom test harnesses) may need manual override.
-- **Binary files** — the diff stat counts binary files as 1 line each for size
-  estimation. Large binary changes may be undercounted for the 800-line warning.
-- **False negatives** — reviewers use "medium" effort fast models. They may miss
-  subtle logic bugs in complex code. The skill reduces defect density; it is not
-  a correctness proof.
-- **Iteration cap** — the skill stops after 2 fix/verify loops. Persistent issues
-  after 2 iterations are reported to you for manual resolution.
-
-## Notes
-
-- Builder does **not** commit and is bounded (max 3 test-fix cycles). Finalize phase gives you the commit choice.
-- `rfv-prep.sh` runs once in Phase 0: guards non-repo/empty/large diffs, computes the diff, and auto-detects the test command across ecosystems: Node (`package.json`), Make, Go, Rust, Python (`pyproject.toml`/`setup.py`/`requirements.txt`), Java Maven/Gradle, .NET, Swift, Ruby, PHP (Composer), Elixir.
-- The script is located at `${AGENTS_DIR:-$HOME/.agents}/skills/review-fix-verify/rfv-prep.sh`. Set `AGENTS_DIR` if your skills are installed elsewhere.
-- Reviewers read surrounding code for context (not just the diff hunk) to cut false positives.
-- Iteration is bounded (max 2) and carries prior context so fixes aren't undone.
-- If a model is unavailable, drops that reviewer and continues.
-- Custom agent personas are optional — the `task` tool's model overrides on built-in agent types cover the same ground. See "Optional: custom agent personas" in `SKILL.md`.
+- A single remaining reviewer can continue if the other model is unavailable.
+- Binary changes count as one changed line for sizing.
+- Model review reduces defect risk; it is not a proof of correctness.
+- Production commands and diffs containing secrets or PII remain out of scope.

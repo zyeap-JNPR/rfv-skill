@@ -1,45 +1,40 @@
 # Development
 
-## Testing
+## Validate
 
-The shell script has a behavioral test suite using [bats-core](https://github.com/bats-core/bats-core).
+From the repository root:
 
 ```bash
-# Install bats-core
-brew install bats-core          # macOS
-sudo apt-get install bats       # Debian/Ubuntu
-
-# Run all tests (from repo root)
-bats tests/rfv-prep.bats
-
-# Syntax check only
-bash -n skills/review-fix-verify/rfv-prep.sh
-
-# Shellcheck (static analysis)
-shellcheck -S warning skills/review-fix-verify/rfv-prep.sh
+make lint test
 ```
 
-CI runs all three checks on every push and PR via GitHub Actions.
+Install test tools with `brew install bats-core jq shellcheck` on macOS or
+`apt-get install bats jq shellcheck` on Debian/Ubuntu. The Make targets run
+syntax, ShellCheck, and all Bats tests; CI uses the same command.
 
----
+## Preflight protocol
 
-## Contributing
+`rfv-prep.sh [path|range]` emits line-oriented markers:
 
-1. Edit files under `skills/review-fix-verify/` in your clone.
-2. Run the test suite: `bats tests/rfv-prep.bats`
-3. Run shellcheck: `shellcheck -S warning skills/review-fix-verify/rfv-prep.sh`
-4. Commit and push. Consumers pick up changes via `npx skills update` (Method A)
-   or `git pull` (Method B).
+- scope: `RFV_REPO_ROOT`, `RFV_COMMAND_DIR`, `RFV_SCOPE_KIND`, `RFV_SCOPE`
+- size/files: `RFV_CHANGED_LINES`, repeated `RFV_CHANGED_FILE`
+- commands: `RFV_TEST_CMD` plus advisory `RFV_*_CMD`
+- status: `RFV_WARN`, `RFV_ERROR`
+- diff: content between `=== DIFF ===` and `=== END DIFF ===`
 
----
+Repository, scope, and changed-file values must fit one line; paths containing CR
+or LF are rejected before diff content is emitted.
 
-## Versioning
+Exit codes:
 
-This repo uses [Semantic Versioning](https://semver.org/):
+| Code | Meaning |
+|------|---------|
+| 2 | Invalid input or configuration |
+| 3 | Not a Git repository |
+| 4 | Empty diff |
+| 5 | No commit history |
+| 6 | Incomplete input or Git/diff failure |
+| 7 | Sensitive path rejected |
 
-- **Patch** (x.y.**Z**) — bug fixes to `rfv-prep.sh`, doc corrections, test additions.
-- **Minor** (x.**Y**.0) — new ecosystem support, new structured output markers, additive SKILL.md changes.
-- **Major** (**X**.0.0) — breaking changes to SKILL.md phases, `rfv-prep.sh` exit codes, or structured output format.
-
-`npx skills update` pulls the latest commit from `main`. Pin to a tag if you need
-stability: `git checkout v1.2.3` in your Method B clone.
+Changing markers, delimiters, exit codes, or workflow phases is a compatibility
+change. Update `SKILL.md`, user docs, and Bats coverage together.
