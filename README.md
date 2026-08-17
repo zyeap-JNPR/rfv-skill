@@ -3,7 +3,7 @@
 A portable [agent skill](https://docs.github.com/en/copilot/concepts/agents/about-agent-skills)
 that runs a multi-model **review → fix → verify → iterate** workflow for code changes.
 
-- **Fan-out review** — 2 parallel reviewers on different fast models (3 with `--thorough`), high-signal findings only.
+- **Fan-out review** — 2 parallel reviewers on different models, high-signal findings only; `--thorough` raises review effort.
 - **Consolidate** — orchestrator dedupes and renders an ACCEPT/REJECT verdict table.
 - **Fix** — builder subagent applies accepted fixes and runs the repo's own test suite until green (bounded).
 - **Verify** — reviewer on a _different_ model than the builder checks only the fix diff for regressions.

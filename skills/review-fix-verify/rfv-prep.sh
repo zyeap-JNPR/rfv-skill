@@ -7,6 +7,7 @@
 #   RFV_SCOPE_KIND: uncommitted | last-commit | range | path
 #   RFV_SCOPE:      human description
 #   RFV_CHANGED_LINES: <N>
+#   RFV_CHANGED_FILE: <path>  (one marker per changed file)
 #   RFV_TEST_CMD:   <runnable command>
 #   RFV_LINT_CMD:   <runnable command>
 #   RFV_BUILD_CMD:  <runnable command>
@@ -28,6 +29,7 @@ if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   echo "RFV_ERROR: not a git repository"
   exit 3
 fi
+REPO_ROOT="$(git rev-parse --show-toplevel)"
 
 # ---------- Git state helpers ----------
 has_head()   { git rev-parse --verify HEAD   >/dev/null 2>&1; }
@@ -95,12 +97,14 @@ fi
 # ---------- Size check ----------
 # Binary files report '-' in --numstat; count them as 1 line each rather than 0
 # to avoid undercounting large binary-heavy diffs.
-CHANGED_LINES="$("${DIFF_CMD[@]}" --numstat 2>/dev/null | awk '
+NUMSTAT="$("${DIFF_CMD[@]}" --numstat 2>/dev/null || true)"
+CHANGED_LINES="$(printf '%s\n' "$NUMSTAT" | awk '
   { a = ($1 ~ /^[0-9]+$/) ? $1+0 : 1
     d = ($2 ~ /^[0-9]+$/) ? $2+0 : 1
     total += a + d }
   END { print total+0 }')"
 echo "RFV_CHANGED_LINES: ${CHANGED_LINES:-0}"
+printf '%s\n' "$NUMSTAT" | awk -F '\t' 'NF >= 3 { print "RFV_CHANGED_FILE: " $NF }'
 if [ "${CHANGED_LINES:-0}" -gt 800 ]; then
   echo "RFV_WARN: large diff (${CHANGED_LINES} lines) — consider scoping down per-dir or per-commit"
 fi
@@ -259,4 +263,7 @@ detect_commands() {
 }
 
 echo "=== TEST/LINT COMMANDS (detected) ==="
-detect_commands
+(
+  cd "$REPO_ROOT"
+  detect_commands
+)

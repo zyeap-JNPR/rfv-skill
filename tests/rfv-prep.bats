@@ -173,6 +173,15 @@ teardown() {
   [[ "$output" == *"RFV_CHANGED_LINES:"* ]]
 }
 
+@test "diff output includes RFV_CHANGED_FILE" {
+  setup_repo
+  make_commit "first"
+  echo "change" >> dummy.txt
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"RFV_CHANGED_FILE: dummy.txt"* ]]
+}
+
 # ---------- Test command detection ----------
 
 @test "package.json with jq emits RFV_TEST_CMD" {
@@ -185,6 +194,19 @@ teardown() {
   [ "$status" -eq 0 ]
   [[ "$output" == *"RFV_TEST_CMD: npm run test"* ]]
   [[ "$output" == *"RFV_LINT_CMD: npm run lint"* ]]
+}
+
+@test "nested directory detects root package commands" {
+  setup_repo
+  echo '{"scripts":{"test":"jest"}}' > package.json
+  mkdir -p src/nested
+  echo "source" > src/nested/file.js
+  make_commit "add package"
+  echo "// change" >> src/nested/file.js
+  cd src/nested
+  run bash "$SCRIPT"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"RFV_TEST_CMD: npm run test"* ]]
 }
 
 @test "go.mod emits RFV_TEST_CMD and RFV_LINT_CMD" {

@@ -8,7 +8,7 @@ Multi-model "review → fix → verify → iterate" workflow as a Copilot CLI sk
 
 ## What it does
 
-1. **Fan-out review** — launches 2 `code-review` subagents (3 with `--thorough`) in parallel, each on a different fast model, demanding high-signal findings only (real bugs, races, security issues — no style/nits). Reviewers read surrounding code for context to cut false positives.
+1. **Fan-out review** — launches 2 `code-review` subagents in parallel, demanding high-signal findings only (real bugs, races, security issues — no style/nits). `--thorough` raises their effort rather than adding a duplicate-model review.
 2. **Consolidate** — orchestrator deduplicates findings, re-calibrates severity with own judgment, and produces an explicit ACCEPT/REJECT verdict table. Refactoring suggestions from reviewers are surfaced as a non-blocking appendix (not sent to the builder).
 3. **Fix** — one `general-purpose` builder subagent applies the accepted fixes and runs the repo's own test suite until green.
 4. **Verify** — a `code-review` verifier on a _different_ model than the builder reviews **only the fix diff** (`git diff HEAD`), checking each fix is correct and looking hard for regressions.
@@ -30,14 +30,13 @@ The critical insight: **the verifier reviews the fix diff, not the original code
 |------|-------|--------|
 | Reviewer A | `claude-sonnet-5` | low (medium on `--thorough`) |
 | Reviewer B | `gpt-5.6-terra` | low (medium on `--thorough`) |
-| Reviewer C (`--thorough`) | `claude-sonnet-5` | medium |
 | Reviewer (`--fast`) | `gpt-5.6-terra` | low |
 | Builder | `claude-sonnet-5` | medium |
 | Builder (`--thorough`) | `claude-sonnet-5` | high |
 | Builder (`--fast`) | `claude-sonnet-5` | low |
 | Verifier | `gpt-5.6-terra` | low |
 
-**Modes:** default = 2 reviewers + sonnet builder + terra verifier. `--fast` = 1 reviewer, lighter sonnet builder, no verifier. `--thorough` = 3 reviewers, higher-effort sonnet builder. Override any model by stating it in your request.
+**Modes:** default = 2 low-effort reviewers + sonnet builder + terra verifier. `--fast` = 1 reviewer, lighter sonnet builder, no verifier. `--thorough` = 2 medium-effort reviewers + higher-effort sonnet builder. Override any model by stating it in your request.
 
 ## Example invocations
 

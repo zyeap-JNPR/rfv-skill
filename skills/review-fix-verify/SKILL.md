@@ -1,7 +1,7 @@
 ---
 name: review-fix-verify
 description: >
-  Multi-model review → fix → verify workflow. Launches 2 parallel code-review subagents (claude-sonnet-5 + gpt-5.6-terra) that read surrounding code for context, consolidates findings with orchestrator reasoning, fixes with a bounded builder agent (claude-sonnet-5), then verifies the fix diff with a fresh reviewer (gpt-5.6-terra). --fast: 1 reviewer, lighter builder, no verifier. --thorough: 3 reviewers, higher-effort sonnet builder. Bounded iteration prevents runaway loops.
+  Multi-model review → fix → verify workflow. Launches 2 parallel code-review subagents (claude-sonnet-5 + gpt-5.6-terra), consolidates findings, fixes with a bounded sonnet builder, then verifies the fix diff with terra. --fast: 1 reviewer, lighter builder, no verifier. --thorough: 2 medium-effort reviewers and higher-effort builder. Bounded iteration prevents runaway loops.
   Use when user says "review and fix", "review fix verify", "rfv", "/review-fix-verify", "multi-model review", "parallel code review", or "review my changes".
 ---
 
@@ -18,7 +18,7 @@ Automates a proven multi-model "review → reason → fix → verify → iterate
 - "multi-model review", "parallel code review"
 - "review my changes [and fix them]"
 
-`--thorough` (or "be thorough") adds a 3rd reviewer. Default is 2 reviewers.
+`--thorough` (or "be thorough") raises both reviewer efforts to medium. Default is low.
 
 `--fast` (or "be fast", "quick review") uses 1 reviewer, a lighter builder model, and skips the verifier phase. Best for solo devs reviewing small, low-risk changes.
 
@@ -30,14 +30,13 @@ Automates a proven multi-model "review → reason → fix → verify → iterate
 |------|-------|--------|-------|
 | Reviewer A | `claude-sonnet-5` | low | medium on `--thorough` |
 | Reviewer B | `gpt-5.6-terra` | low | medium on `--thorough` |
-| Reviewer C (`--thorough`) | `claude-sonnet-5` | medium | independent third review |
 | Reviewer (`--fast`) | `gpt-5.6-terra` | low | sole reviewer in fast mode |
 | Builder | `claude-sonnet-5` | medium | default |
 | Builder (`--thorough`) | `claude-sonnet-5` | high | deep reasoning for complex fixes |
 | Builder (`--fast`) | `claude-sonnet-5` | low | lighter builder for trivial fixes |
 | Verifier | `gpt-5.6-terra` | low | fix diffs are small; MUST differ from builder |
 
-**Modes:** default = 2 reviewers + sonnet builder + terra verifier. `--fast` = 1 reviewer, lighter sonnet builder, no verifier. `--thorough` = 3 reviewers, higher-effort sonnet builder.
+**Modes:** default = 2 low-effort reviewers + sonnet builder + terra verifier. `--fast` = 1 reviewer, lighter sonnet builder, no verifier. `--thorough` = 2 medium-effort reviewers + higher-effort sonnet builder.
 
 Override any model by stating it: "use sonnet for the builder", "use terra as reviewer A".
 If a model is unavailable at runtime, drop that reviewer (a single reviewer still works) and note it in the summary.
@@ -63,7 +62,7 @@ If a model is unavailable at runtime, drop that reviewer (a single reviewer stil
    - `RFV_ERROR: repository has no commits yet` → stop, tell the user to make an initial commit.
    - `RFV_ERROR: empty diff` → stop, nothing to review.
    - `RFV_WARN: large diff (>800 lines)` → warn the user and offer to scope down
-     (per-directory or per-commit) before spending 3 model reviews on it. Proceed
+     (per-directory or per-commit) before spending model reviews on it. Proceed
      only if they confirm.
 
 3. **Test command.** Parse the `RFV_TEST_CMD:` structured marker from the script
@@ -76,21 +75,16 @@ If a model is unavailable at runtime, drop that reviewer (a single reviewer stil
    as a *starting pointer* in the reviewer prompts (Phase 1). Report scope + line
    count + test command before proceeding.
 
-5. **Pre-capture file context for reviewers.** If `RFV_CHANGED_LINES` ≤ 400, also
-   capture the full content of each changed file (from `git diff --name-only`) and
-   store it. Cap at 5 files × 300 lines each. Inline this as `{{FILE_CONTEXT}}` in
-   Phase 1 reviewer prompts so reviewers don't need to open files themselves — this
-   eliminates per-reviewer file I/O tool calls and speeds up Phase 1 significantly.
-   If the diff is large (> 400 lines) or there are > 5 changed files, skip this step
-   and keep the "read surrounding files" instruction in the reviewer prompt instead.
+5. **Use bounded context.** `RFV_CHANGED_FILE:` markers identify changed files. Do
+   not preload full files; reviewers open only files needed to confirm a finding.
 
 ---
 
 ### Phase 1 — Fan-out review (PARALLEL)
 
-Launch **2 `code-review` subagents in parallel** (3 on `--thorough`, 1 on `--fast`) in a SINGLE
+Launch **2 `code-review` subagents in parallel** (1 on `--fast`) in a SINGLE
 `task` call block. Use the model matrix above — default reviewers use `effort: low`; `--thorough`
-uses `effort: medium`. Inline the diff and file context from Phase 0. Use this template:
+uses `effort: medium`. Inline the diff and changed-file markers from Phase 0. Use this template:
 
 > You are a senior engineer doing a focused code review. Do NOT modify any code.
 >
@@ -99,11 +93,10 @@ uses `effort: medium`. Inline the diff and file context from Phase 0. Use this t
 > {{DIFF_FROM_PHASE_0}}
 > ```
 >
-> **Full file context (changed files — use this instead of opening files yourself):**
-> {{FILE_CONTEXT}}
-> *(If FILE_CONTEXT is "(not pre-captured — read surrounding files as needed)", open the relevant files before flagging.)*
+> **Changed files:** {{RFV_CHANGED_FILES}}
 >
-> **CRITICAL:** Confirm every suspected issue is real in context before reporting. A diff alone produces false positives.
+> **CRITICAL:** Confirm every suspected issue is real in context. Open only relevant
+> files and lines before reporting; a diff alone produces false positives.
 >
 > **Report ONLY:** bugs, logic errors, races, security vulnerabilities, correctness failures, resource leaks, null/panic risks, broken invariants. Nothing else — no style, naming, whitespace, micro-optimizations, or "consider X instead of Y".
 >
