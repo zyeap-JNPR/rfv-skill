@@ -1,7 +1,7 @@
 ---
 name: review-fix-verify
 description: >
-  Multi-model review → fix → verify workflow. Launches 2 parallel code-review subagents (claude-sonnet-4.6 + gpt-5.3-codex) that read surrounding code for context, consolidates findings with orchestrator reasoning, fixes with a bounded builder agent (claude-sonnet-4.6), then verifies the fix diff with a fresh reviewer (gpt-5.4-mini). --fast: 1 reviewer, cheapest builder, no verifier. --thorough: 3 reviewers, opus builder. Bounded iteration prevents runaway loops.
+  Multi-model review → fix → verify workflow. Launches 2 parallel code-review subagents (claude-sonnet-5 + gpt-5.6-terra) that read surrounding code for context, consolidates findings with orchestrator reasoning, fixes with a bounded builder agent (claude-sonnet-5), then verifies the fix diff with a fresh reviewer (gpt-5.6-terra). --fast: 1 reviewer, lighter builder, no verifier. --thorough: 3 reviewers, higher-effort sonnet builder. Bounded iteration prevents runaway loops.
   Use when user says "review and fix", "review fix verify", "rfv", "/review-fix-verify", "multi-model review", "parallel code review", or "review my changes".
 ---
 
@@ -28,18 +28,18 @@ Automates a proven multi-model "review → reason → fix → verify → iterate
 
 | Role | Model | Effort | Notes |
 |------|-------|--------|-------|
-| Reviewer A | `claude-sonnet-4.6` | low | medium on `--thorough` |
-| Reviewer B | `gpt-5.3-codex` | low | medium on `--thorough` |
-| Reviewer C (`--thorough`) | `gemini-3.5-flash` | low | cheap 3rd reviewer |
-| Reviewer (`--fast`) | `gemini-3.5-flash` | low | sole reviewer in fast mode |
-| Builder | `claude-sonnet-4.6` | medium | default |
-| Builder (`--thorough`) | `claude-opus-4.8` | high | deep reasoning for complex fixes |
-| Builder (`--fast`) | `gemini-3.5-flash` | low | cheapest, for trivial fixes |
-| Verifier | `gpt-5.4-mini` | low | fix diffs are small; MUST differ from builder |
+| Reviewer A | `claude-sonnet-5` | low | medium on `--thorough` |
+| Reviewer B | `gpt-5.6-terra` | low | medium on `--thorough` |
+| Reviewer C (`--thorough`) | `claude-sonnet-5` | medium | independent third review |
+| Reviewer (`--fast`) | `gpt-5.6-terra` | low | sole reviewer in fast mode |
+| Builder | `claude-sonnet-5` | medium | default |
+| Builder (`--thorough`) | `claude-sonnet-5` | high | deep reasoning for complex fixes |
+| Builder (`--fast`) | `claude-sonnet-5` | low | lighter builder for trivial fixes |
+| Verifier | `gpt-5.6-terra` | low | fix diffs are small; MUST differ from builder |
 
-**Modes:** default = 2 reviewers + sonnet builder + mini verifier. `--fast` = 1 reviewer, flash builder, no verifier. `--thorough` = 3 reviewers, opus builder.
+**Modes:** default = 2 reviewers + sonnet builder + terra verifier. `--fast` = 1 reviewer, lighter sonnet builder, no verifier. `--thorough` = 3 reviewers, higher-effort sonnet builder.
 
-Override any model by stating it: "use opus for the builder", "use codex as reviewer A".
+Override any model by stating it: "use sonnet for the builder", "use terra as reviewer A".
 If a model is unavailable at runtime, drop that reviewer (a single reviewer still works) and note it in the summary.
 
 ---
@@ -163,7 +163,7 @@ If zero findings accepted: report to user, skip to Phase 6 (no fix needed).
 
 ### Phase 3 — Fix
 
-Launch **ONE `general-purpose` builder subagent** (use model matrix: `claude-sonnet-4.6` medium by default, `claude-opus-4.8` high on `--thorough`, `gemini-3.5-flash` low on `--fast`). Use this prompt template:
+Launch **ONE `general-purpose` builder subagent** (use model matrix: `claude-sonnet-5` medium by default, high on `--thorough`, low on `--fast`). Use this prompt template:
 
 > **Your mission:** Fix the following verified bugs in the codebase. Edit code, add/update tests if needed, then run the test suite until green.
 >
@@ -197,7 +197,7 @@ Wait for builder to complete. Capture the summary.
 **In `--fast` mode: skip this phase entirely. Proceed directly to Phase 6.**
 
 After the builder reports done, run `git diff HEAD` yourself and capture the fix diff. Then
-launch **ONE `code-review` verifier subagent** (`model: gpt-5.4-mini`, `effort: low` — MUST
+launch **ONE `code-review` verifier subagent** (`model: gpt-5.6-terra`, `effort: low` — MUST
 differ from builder model). Use this prompt template:
 
 > **Fix diff (review ONLY these changes):**
@@ -314,4 +314,3 @@ These apply to the orchestrator and all subagents throughout the workflow.
 
 **Breaking changes**
 - If an accepted finding requires changing a public interface or removing a symbol, the builder must note this explicitly and suggest a deprecation path rather than a silent removal.
-
